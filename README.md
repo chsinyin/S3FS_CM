@@ -17,3 +17,10 @@ Patch files :
 patch -po < fdcache_cpp.patch  
 patch -po < fdcache_h.patch
 ```
+You can modify the ptah of cache, maximum cache size, and change the compress-decision in fdcache.cpp
+And make file :  
+```
+sudo make  
+cd ..  
+sudo make install  
+```
