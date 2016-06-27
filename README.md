@@ -17,10 +17,17 @@ Patch files :
 patch -po < fdcache_cpp.patch  
 patch -po < fdcache_h.patch
 ```
-You can modify the ptah of cache, maximum cache size, and change the compress-decision in fdcache.cpp
+You can modify the ptah of cache, maximum cache size, and change the compress-decision in fdcache.cpp  
 And make file :  
 ```
 sudo make  
 cd ..  
 sudo make install  
 ```
+Run :  Ex.
+```
+s3fs testBucket tmp/s3  
+```
+In this version, the mount point(tmp/s3) is used to identify s3fs_CM.  
+If the mount point is not tmp/s3, it behaves as original s3fs.
+This can also be modified in fdcache.cpp
