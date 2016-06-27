@@ -1,0 +1,78 @@
+--- fdcache.h	2016-06-27 10:03:29.345986787 +0800
++++ /scratch1/project/2016_HybridCloudStorage/S3FS_src/fdcache.h	2016-06-03 11:44:27.308192343 +0800
+@@ -23,6 +23,39 @@
+ #include <sys/statvfs.h>
+ #include "curl.h"
+ 
++//chsinyin add
++struct CMEntity
++{
++	char fname[50];
++	int pID;
++	bool isCompressed;
++	int hitCount;
++	int size;
++};
++typedef std::list<struct CMEntity> CMlist_t;
++class CM
++{
++	//private:
++	static CM CMinfo;
++	int MaxSize;
++	int totalSize;
++	int hitrate_count, hitrate_hit, hitrate_miss;
++	int c_count, d_count;
++	CMlist_t CMlist, listN, listY, listA;
++	public:
++		char dirPath[50];
++		static CM* get(void){return &CMinfo;}
++		void Decompress(CMEntity cm_e, char *buf);
++		int Decision(CMEntity cm_i, char *cm_buf, int size);
++		//void copyList(CMlist_t *des, CMlist_t *src);
++		int getData(off_t start, size_t size, int fd, const char *path, int orgsize);
++		CM();		
++	//private:
++		//pthread_mutex_t CM_lock;
++};
++//
++
++
+ //------------------------------------------------
+ // CacheFileStat
+ //------------------------------------------------
+@@ -109,10 +142,14 @@
+ //------------------------------------------------
+ class FdEntity
+ {
++  //chsinyin change from private to public
++  public:
++    PageList	    pagelist;
++    //pthread_mutex_t fdent_lock;
+   private:
+     pthread_mutex_t fdent_lock;
+     bool            is_lock_init;
+-    PageList        pagelist;
++    //PageList        pagelist;
+     int             refcnt;         // reference count
+     std::string     path;           // object path
+     std::string     cachepath;      // local cache file path
+@@ -137,6 +174,10 @@
+     bool SetAllStatusUnloaded(void) { return SetAllStatus(false); }
+ 
+   public:
++    //chsinyin add
++    int GetOrgSize(void){return (int)size_orgmeta;}
++    pthread_mutex_t GetLock(void){return fdent_lock;}
++    //
+     explicit FdEntity(const char* tpath = NULL, const char* cpath = NULL);
+     ~FdEntity();
+ 
+@@ -168,7 +209,7 @@
+     int RowFlush(const char* tpath, bool force_sync = false);
+     int Flush(bool force_sync = false) { return RowFlush(NULL, force_sync); }
+ 
+-    ssize_t Read(char* bytes, off_t start, size_t size, bool force_load = false);
++    ssize_t Read(char* bytes, const char* mountPt, off_t start, size_t size, bool force_load = false);
+     ssize_t Write(const char* bytes, off_t start, size_t size);
+ };
+ typedef std::map<std::string, class FdEntity*> fdent_map_t;   // key=path, value=FdEntity*

@@ -1,0 +1,470 @@
+--- fdcache.cpp	2016-06-27 10:03:29.299883951 +0800
++++ /scratch1/project/2016_HybridCloudStorage/S3FS_src/fdcache.cpp	2016-06-03 11:44:27.323161414 +0800
+@@ -46,6 +46,19 @@
+ #include "string_util.h"
+ #include "curl.h"
+ 
++//chsinyin add
++#include "zlib.h"
++#include <fstream>
++#define PS 1048576 //1M
++#define ComRatio 0.2
++#define CMcloud 530 //s/MB
++#define CMcache	5
++#define CMd 6 //s/MB
++#define CMc 73 
++float wr_t, cd_t, s3_t, c_t, d_t;
++//#define PS 199680 //195k
++//
++
+ using namespace std;
+ 
+ //------------------------------------------------
+@@ -62,6 +75,375 @@
+ #define TMPFILE_DIR_0PATH   "/tmp"
+ #endif
+ 
++//chsinyin add
++CM CM::CMinfo;
++//char CM::dirPath[50];
++CM::CM()
++{
++	strcpy(dirPath, "/home/chsinyin/tmp/CM");
++	MaxSize = 600000000; 
++	totalSize = 0;
++	hitrate_count = 0;
++	hitrate_hit = 0;
++	hitrate_miss = 0;
++	c_count = 0;
++	d_count = 0;
++}
++
++/*void copyList(CMlist_t *des, CMlist_t *src)
++{
++	CMlist_t::iterator srcIte;
++	for(srcIte=src.begin(); srcIte!=src.end(); ++srcIte){
++		des.push_back(*srcIte);
++	}
++}*/
++
++void CM::Decompress(CMEntity cm, char *buf)
++{
++	S3FS_PRN_DBG("CM::Decompress");
++	CM::get()->d_count++;
++	//read compressed data
++	char *tmpbuf, tmppath[50]={0}, str[50]={0};
++	fstream fp;
++	struct timeval start, end;
++	sprintf(str, "%d", cm.pID);
++	strcpy(tmppath, CM::get()->dirPath);
++	strcat(tmppath, cm.fname);
++	strcat(tmppath, str);
++	fp.open(tmppath, ios::in);
++	tmpbuf = (char *)malloc(sizeof(char)*PS);
++	gettimeofday(&start, NULL);
++	fp.read(tmpbuf, PS);
++	gettimeofday(&end, NULL);
++	wr_t += ((end.tv_sec-start.tv_sec)*1000+(float)(end.tv_usec-start.tv_usec)/1000);
++	S3FS_PRN_DBG("decompress %s", tmppath);
++	fp.close();
++
++	//decompression cm.pid
++	gettimeofday(&start, NULL);
++	z_stream infstream;
++	infstream.zalloc = Z_NULL;
++	infstream.zfree = Z_NULL;
++	infstream.opaque = Z_NULL;
++	infstream.avail_in =PS;
++	infstream.next_in = (Bytef* )tmpbuf;
++	infstream.avail_out = PS;
++	infstream.next_out = (Bytef* )buf;
++
++	inflateInit(&infstream);
++	inflate(&infstream, Z_SYNC_FLUSH);
++	inflateEnd(&infstream);	
++	gettimeofday(&end, NULL);
++	cd_t += ((end.tv_sec-start.tv_sec)*1000+(float)(end.tv_usec-start.tv_usec)/1000);
++	d_t += ((end.tv_sec-start.tv_sec)*1000+(float)(end.tv_usec-start.tv_usec)/1000);
++	free(tmpbuf);
++	S3FS_PRN_DBG("Finish Decompress");
++}
++
++int CM::Decision(CMEntity cm_i, char *cm_buf, int size)
++{
++	S3FS_PRN_DBG("CM::Decision");
++	char buf[PS]={0};
++	int needCompress, tempRemain;
++	int i, countN, countY;
++	float avoidCloud, avoidClient, value;
++	struct timeval start, end;
++	fstream fp;
++        char tmp_path[50]={0}, str[50]={0};
++
++	//open page file
++        sprintf(str, "%d", cm_i.pID);
++	strcpy(tmp_path, CM::get()->dirPath);
++        strcat(tmp_path, cm_i.fname);
++        strcat(tmp_path, str);
++	S3FS_PRN_DBG("open file = %s", tmp_path);
++        fp.open(tmp_path, ios::out);
++
++	//decide value of needCompress
++	needCompress = 0;
++	countN = 0;
++	countY = 0;
++	avoidCloud = 0;
++	avoidClient = 0;
++	value = 0;
++	//kickN
++	//copyList(listN, CMlist);
++	/*listN = CM::get()->CMlist;
++	tempRemain = CM::get()->MaxSize - CM::get()->totalSize;
++	S3FS_PRN_DBG("listN, size=%d, remain=%d", size, tempRemain);
++	while(tempRemain < size){
++		tempRemain += listN.back().size;
++		S3FS_PRN_DBG("back=%d, remain=%d", listN.back().size, tempRemain);
++		listN.pop_back();
++		countN++;
++	}
++	//kickY
++	//copyList(listY, CMlist);
++	listY = CM::get()->CMlist;
++	tempRemain = CM::get()->MaxSize - CM::get()->totalSize;
++	int size_c = size*ComRatio;
++	S3FS_PRN_DBG("listY, ratio=%f, size=%d, size_c=%d, remain=%d-%d=%d", ComRatio, size, size_c, CM::get()->MaxSize, CM::get()->totalSize, tempRemain);
++	while(tempRemain < size_c){
++		tempRemain += listY.back().size;
++		S3FS_PRN_DBG("back=%d, remain=%d", listN.back().size, tempRemain);
++		listY.pop_back();
++		countY++;
++	}	
++	S3FS_PRN_DBG("countN=%d, countY=%d", countN, countY);
++	//avoid
++	//copyList(listA, CMlist);
++	listA = CM::get()->CMlist;
++	int sizeCloud;
++	for(i=0; i<countN-countY; i++){
++		sizeCloud = (listA.back().size*listA.back().isCompressed?(1/ComRatio):1)/(1024*1024);
++		avoidCloud += (sizeCloud*CMcloud - (listA.back().size/(1024*1024))*(CMcache+CMd*listA.back().isCompressed));
++	}
++	avoidClient = (CMcache*size - (CMcache+CMd)*size*ComRatio)/(1024*1024);
++	value = avoidCloud + avoidClient;
++	needCompress = (value>0?1:0);
++	S3FS_PRN_DBG("need=%d, value=%f, cloud=%f, client=%f", needCompress, value, avoidCloud, avoidClient);*/
++	//Compress return buffer
++	needCompress = 0;
++	if(needCompress){
++		CM::get()->c_count++;
++		gettimeofday(&start, NULL);
++		z_stream defstream;
++		defstream.zalloc = Z_NULL;
++		defstream.zfree = Z_NULL;
++		defstream.opaque = Z_NULL;
++		defstream.avail_in = size;
++		defstream.next_in = (Bytef* )cm_buf;
++		defstream.avail_out = size;
++		defstream.next_out = (Bytef* )buf;
++	
++		deflateInit(&defstream, 6);//level -1~9, level -1 = 6, higher level means better compression but slower
++		deflate(&defstream, Z_FINISH);
++		gettimeofday(&end, NULL);
++		cd_t += ((end.tv_sec-start.tv_sec)*1000+(float)(end.tv_usec-start.tv_usec)/1000);
++		c_t += ((end.tv_sec-start.tv_sec)*1000+(float)(end.tv_usec-start.tv_usec)/1000);
++
++		gettimeofday(&start, NULL);
++		fp.write(buf, size-defstream.avail_out);
++		gettimeofday(&end, NULL);
++		deflateEnd(&defstream);
++	}
++	else{
++		S3FS_PRN_DBG("no compress");
++		gettimeofday(&start, NULL);
++		fp.write(buf, size);
++		gettimeofday(&end, NULL);
++	}
++	wr_t += ((end.tv_sec-start.tv_sec)*1000+(float)(end.tv_usec-start.tv_usec)/1000);
++ 	fp.close();
++	S3FS_PRN_DBG("Finish Decision");
++	if(needCompress)return 1;
++	else return 0;
++} 
++
++
++int CM::getData(off_t start, size_t size, int fd, const char *path, int orgsize)
++{	
++      	S3FS_PRN_DBG("[start=%jd][size=%jd][fd=%d][path=%s]", start, size, fd, path);
++	int startP, endP;
++	int i, endlist, *flags;
++	char buf[PS], tmp_path[50], str[5], tmp_fname[50], dbgstr[1000], dbgstr1[1000];
++	struct timeval startt, endt;
++	
++	wr_t = 0;
++	cd_t = 0;
++	c_t = 0;
++	d_t = 0;
++	s3_t = 0;
++	startP = start/PS;
++	endP = (size%PS==0) ? size/PS+startP:size/PS+1+startP;
++	S3FS_PRN_DBG("startP=%d, endP=%d", startP, endP);
++	flags = (int *)malloc(sizeof(int)*(endP));
++	for(i=0; i<endP; i++){
++		flags[i] = 0;
++	}
++
++	S3FS_PRN_DBG("finish flags allocate");
++	// \path\to\CMdir
++	strcpy(tmp_path, CM::get()->dirPath);
++	strcat(tmp_path, path);
++
++	//handle hit
++	endlist = (int)CM::get()->CMlist.size();
++	S3FS_PRN_DBG("list length = %d", endlist);
++	i = 0;
++	for(CMlist_t::iterator iter=CM::get()->CMlist.begin(); i<endlist && iter!=CM::get()->CMlist.end(); i++){
++		if(!strcmp(path, (*iter).fname) && (*iter).pID>=startP && (*iter).pID<endP){
++			FILE *flo;
++			flo = fopen("/home/chsinyin/Log_Locality", "a");
++			fprintf(flo, "%d\t", i);
++			fclose(flo);
++			S3FS_PRN_DBG("hit %s-%d at %d", (*iter).fname, (*iter).pID, i);
++
++			flags[(*iter).pID] = 1;
++			CM::get()->hitrate_hit++;
++			int tmp_fd;
++			FILE *tmp_fp;
++			CMEntity tmpCM;
++			
++			//get page fd, get page file and write to cache file
++			strcpy(tmp_fname, tmp_path);
++			sprintf(str, "%d", (*iter).pID);
++			strcat(tmp_fname, str);
++			S3FS_PRN_DBG("open file = %s", tmp_fname);
++			tmp_fp = fopen(tmp_fname, "r");
++			tmp_fd = fileno(tmp_fp);
++			if((*iter).isCompressed) Decompress((*iter), buf);
++			else pread(tmp_fd, buf, PS, (*iter).pID*PS);
++			fclose(tmp_fp);
++
++			gettimeofday(&startt, NULL);
++			if(((*iter).pID+1)*PS > orgsize){
++				pwrite(fd, buf, orgsize-(*iter).pID*PS, (*iter).pID*PS);
++			}
++			else pwrite(fd, buf, PS, (*iter).pID*PS);
++			gettimeofday(&endt, NULL);
++			wr_t += ((endt.tv_sec-startt.tv_sec)*1000+(float)(endt.tv_usec-startt.tv_usec)/1000);
++			S3FS_PRN_DBG("finish write");
++
++			//add hit node to list front
++			strcpy(tmpCM.fname, (*iter).fname);
++			tmpCM.pID = (*iter).pID;
++			tmpCM.isCompressed = (*iter).isCompressed;
++			tmpCM.hitCount = (*iter).hitCount + 1;
++			tmpCM.size = (*iter).size;
++			CM::get()->CMlist.push_front(tmpCM);
++			/*memset(dbgstr1, 0, 1000);
++			for(CMlist_t::iterator iter1=CMlist.begin(); iter1!=CMlist.end(); ++iter1){
++				sprintf(dbgstr, "pID%d, ", (*iter1).pID);
++				strcat(dbgstr1, dbgstr);
++			}
++			S3FS_PRN_DBG("after insert : %s", dbgstr1);*/
++
++			//erase hit node from list 
++			iter=CM::get()->CMlist.erase(iter);
++			/*memset(dbgstr1, 0, 1000);
++			for(CMlist_t::iterator iter1=CMlist.begin(); iter1!=CMlist.end(); ++iter1){
++				sprintf(dbgstr, "pID%d, ", (*iter1).pID);
++				strcat(dbgstr1, dbgstr);
++			}
++			S3FS_PRN_DBG("after erase : %s", dbgstr1);*/
++		}
++		else iter++;
++	}
++
++	//handle miss
++	//int result = 0;
++	for(i=startP; i<endP; i++){
++		if(i*PS > orgsize)break;
++		if(flags[i]!=1){
++			CM::get()->hitrate_miss++;
++			S3FS_PRN_DBG("miss %d", i);
++			//s3download  single request
++			S3fsCurl s3fscurl;
++			int loadsize = 0;
++			if((i+1)*PS <= orgsize){//get 1 entire page
++				//result = s3fscurl.GetObjectRequest(path, fd, i*PS, PS);
++				loadsize = PS;
++			}
++			else{
++				loadsize = orgsize-i*PS;
++			}
++			gettimeofday(&startt, NULL);
++			s3fscurl.GetObjectRequest(path, fd, i*PS, loadsize);
++			gettimeofday(&endt, NULL);
++			s3_t += ((endt.tv_sec-startt.tv_sec)*1000+(float)(endt.tv_usec-startt.tv_usec)/1000);
++			S3FS_PRN_DBG("Finish s3 download: from %d, range %d, nowtime %.3f", i*PS, loadsize, s3_t);	
++			/*if((i+1)*PS > ent->GetOrgSize()){
++				char *fill;
++				int fillsize = (i+1)*PS - ent->GetOrgSize();
++				fill = (char *)malloc(sizeof(char)*fillsize);
++				S3FS_PRN_DBG("fill size=%d", fillsize);
++				memset(fill, 0, fillsize);
++				S3FS_PRN_DBG("write %jd bytes", pwrite(fd, fill, fillsize, ent->GetOrgSize()-1));
++				free(fill);
++			}*/
++
++			CMEntity newCM;
++			strcpy(newCM.fname, path);
++			newCM.pID = i;
++			newCM.hitCount = 1;
++			gettimeofday(&startt, NULL);
++			pread(fd, buf, loadsize, i*PS);
++			gettimeofday(&endt, NULL);
++			wr_t += ((endt.tv_sec-startt.tv_sec)*1000+(float)(endt.tv_usec-startt.tv_usec)/1000);
++			S3FS_PRN_DBG("before decision, max=%d, total=%d", CM::get()->MaxSize, CM::get()->totalSize);
++			newCM.isCompressed = Decision(newCM, buf, loadsize);
++
++			FILE *tmp_fp;
++			strcpy(tmp_fname, tmp_path);
++			sprintf(str, "%d", i);
++			strcat(tmp_fname, str);
++			S3FS_PRN_DBG("open file = %s", tmp_fname);
++			tmp_fp = fopen(tmp_fname, "r");
++			fseek(tmp_fp, 0, SEEK_END);
++			newCM.size = (int)ftell(tmp_fp);
++			fseek(tmp_fp, 0, SEEK_SET);
++			fclose(tmp_fp);
++			S3FS_PRN_DBG("file size = %d, total = %d, element=%jd", newCM.size, CM::get()->totalSize, CM::get()->CMlist.size());
++
++			while(CM::get()->totalSize+newCM.size > CM::get()->MaxSize && !CMlist.empty()){
++				S3FS_PRN_DBG("remove tail size=%d, fname=%s, pid=%d", CM::get()->CMlist.back().size, CM::get()->CMlist.back().fname, CM::get()->CMlist.back().pID);
++				CM::get()->totalSize -= CM::get()->CMlist.back().size;
++				S3FS_PRN_DBG("total size=%d", CM::get()->totalSize);
++				CM::get()->CMlist.pop_back();
++				S3FS_PRN_DBG("erase");
++			}
++			CM::get()->totalSize += newCM.size;
++			S3FS_PRN_DBG("after total size=%d", CM::get()->totalSize);
++			CM::get()->CMlist.push_front(newCM);
++			//S3FS_PRN_DBG("insert fname=%s, pid=%d, isC=%d, hitCOunt=%d, size=%d", CMlist.front().fname, CMlist.front().pID, CMlist.front().isCompressed, CMlist.front().hitCount, CMlist.front().size);
++			S3FS_PRN_DBG("after total have %jd element", CM::get()->CMlist.size());
++		}
++	}
++
++	/*memset(dbgstr1, 0, 1000);
++	for(CMlist_t::iterator iter1=CMlist.begin(); iter1!=CMlist.end(); ++iter1){
++        	sprintf(dbgstr, "pID%d, ", (*iter1).pID);
++                strcat(dbgstr1, dbgstr);
++        }
++        S3FS_PRN_DBG("after getdata : %s", dbgstr1);*/
++
++	/*FdEntity* ent;
++        ent = FdManager::get()->GetFdEntity(path, fd);
++	fdpage_list_t unloaded_list;
++	if(0<ent->pagelist.GetUnloadedPages(unloaded_list, start, size)){
++		for(fdpage_list_t::iterator iter=unloaded_list.begin(); iter!=unloaded_list.end(); ++iter){
++			ent->pagelist.SetPageLoadedStatus((*iter)->offset, static_cast<off_t>((*iter)->bytes), true);
++		}
++	}
++	PageList::FreeList(unloaded_list);*/
++	free(flags);
++	FILE *fwr, *fcd, *fs3, *fhr, *fc, *f_d, *fcdc;
++	fwr = fopen("/home/chsinyin/Log_wr", "a");
++	fcd = fopen("/home/chsinyin/Log_cd", "a");
++	fc = fopen("/home/chsinyin/Log_c", "a");
++	f_d = fopen("/home/chsinyin/Log_d", "a");
++	fs3 = fopen("/home/chsinyin/Log_s3", "a");
++	fhr = fopen("/home/chsinyin/Log_hr", "a");
++	fcdc = fopen("/home/chsinyin/Log_cdc", "a");
++	fprintf(fwr, "%s\t%jd\t%.3f\n", path, start, wr_t);
++	fprintf(fcd, "%s\t%jd\t%.3f\n", path, start, cd_t);
++	fprintf(fc, "%s\t%jd\t%.3f\n", path, start, c_t);
++	fprintf(f_d, "%s\t%jd\t%.3f\n", path, start, d_t);
++	fprintf(fs3, "%s\t%jd\t%.3f\n", path, start, s3_t);
++	fprintf(fhr, "miss %d, hit %d\n", CM::get()->hitrate_miss, CM::get()->hitrate_hit);
++	fprintf(fcdc, "c %d, d %d\n", CM::get()->c_count, CM::get()->d_count);
++	fclose(fwr);
++	fclose(fcd);
++	fclose(fc);
++	fclose(f_d);
++	fclose(fs3);
++	fclose(fhr);
++	fclose(fcdc);
++	S3FS_PRN_DBG("Finish getData");
++	return true;
++}
++//
+ //------------------------------------------------
+ // CacheFileStat class methods
+ //------------------------------------------------
+@@ -1044,6 +1426,7 @@
+       size_t over_size = (*iter)->bytes - need_load_size;
+ 
+       // download
++      // chsinyin cancel multipart
+       if(static_cast<size_t>(2 * S3fsCurl::GetMultipartSize()) < need_load_size && !nomultipart){ // default 20MB
+         // parallel request
+         // Additional time is needed for large files
+@@ -1057,8 +1440,18 @@
+         }
+       }else{
+         // single request
++      //chsinyin change to while loop
++      //off_t chunk;
++      //while(need_load_size>0){
++      if(0<need_load_size){
+         S3fsCurl s3fscurl;
++	//chunk = need_load_size > PS ? PS:need_load_size;
++        //result = s3fscurl.GetObjectRequest(path.c_str(), fd, (*iter)->offset, chunk);
++	//need_load_size -= chunk;
+         result = s3fscurl.GetObjectRequest(path.c_str(), fd, (*iter)->offset, need_load_size);
++	}else{
++		result=0;
++	}
+       }
+       if(0 != result){
+         break;
+@@ -1429,10 +1822,9 @@
+   return result;
+ }
+ 
+-ssize_t FdEntity::Read(char* bytes, off_t start, size_t size, bool force_load)
++ssize_t FdEntity::Read(char* bytes, const char* mountPt, off_t start, size_t size, bool force_load)
+ {
+-  S3FS_PRN_DBG("[path=%s][fd=%d][offset=%jd][size=%zu]", path.c_str(), fd, (intmax_t)start, size);
+-
++  S3FS_PRN_DBG("[path=%s][fd=%d][offset=%jd][size=%zu][mountPt=%s]", path.c_str(), fd, (intmax_t)start, size, mountPt);
+   if(-1 == fd){
+     return -EBADF;
+   }
+@@ -1445,6 +1837,12 @@
+   int     result;
+   ssize_t rsize;
+ 
++  S3FS_PRN_DBG("unloadedsize=%jd", pagelist.GetTotalUnloadedPageSize(start, size));
++
++  //struct timeval startt, endt;
++  //gettimeofday(&startt, NULL);
++  if(!strcmp(mountPt, "tmp/s3"))CM::get()->getData(start, size, fd, path.c_str(), GetOrgSize());
++  else{
+   // check disk space
+   if(0 < pagelist.GetTotalUnloadedPageSize(start, size)){
+     if(!FdManager::IsSafeDiskSpace(NULL, size)){
+@@ -1477,10 +1875,18 @@
+     }
+     // Loading
+     if(0 < size && 0 != (result = Load(start, load_size))){
++    //if(0 < size && 0 != (result = CM::get()->getData(start, size, fd, path.c_str()))){
+       S3FS_PRN_ERR("could not download. start(%jd), size(%zu), errno(%d)", (intmax_t)start, size, result);
+       return -EIO;
+     }
+   }
++  }
++  //gettimeofday(&endt, NULL);
++  /*FILE *fp;
++  if(!strcmp(mountPt, "tmp/s3"))fp = fopen("/home/chsinyin/Log_CM", "a");
++  else fp = fopen("/home/chsinyin/Log_s3fs", "a");
++  fprintf(fp, "%s, %jd, %zu, %d\n", path.c_str(), start, size, (int)(endt.tv_sec-startt.tv_sec)*1000000+(int)(endt.tv_usec-startt.tv_usec));
++  fclose(fp);*/
+   // Reading
+   if(-1 == (rsize = pread(fd, bytes, size, start))){
+     S3FS_PRN_ERR("pread failed. errno(%d)", errno);
