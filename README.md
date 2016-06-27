@@ -7,8 +7,12 @@ Setting
 ==
 Download and install s3fs-fuse first at https://github.com/s3fs-fuse/s3fs-fuse  
 Download both patch files(fdcache_cpp.patch and fdcache_h.patch)  
-    ```
-    Move the files to /s3fs-fuse/src/ 
+```
+cp fdcache_cpp.patch ~/s3fs-fuse/src/
+```
+```
+cp fdcache_cpp.patch ~/s3fs-fuse/src/
+```
     patch -po < fdcache_cpp.patch  
     patch -po < fdcache_h.patch
-    ```
+    
