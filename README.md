@@ -24,11 +24,11 @@ You can modify :
 -Maximum cache size  
 -Size of one page  
 -Log files' path  
--Method of decide to compress or not to compress a file
+-Method of decide to compress or not to compress a file  
 -...
 in `fdcache.cpp ` 
   
-Make file :  
+After the modification, make file :  
 ```
 sudo make  
 cd ..  
