@@ -1,12 +1,13 @@
 S3FS_CM
 ==
 We modified S3FS by adding another cache.
-User can apply compression to the files in cache.
+User can apply different compression techniques to the files in this cache.
 
 Setting
 ==
-Download and install s3fs-fuse first at https://github.com/s3fs-fuse/s3fs-fuse  
-Download both patch files(fdcache_cpp.patch and fdcache_h.patch)  
+First, you should download and install libfuse at https://github.com/libfuse/libfuse  
+Next, download and install s3fs-fuse at https://github.com/s3fs-fuse/s3fs-fuse  
+Then download both patch files(fdcache_cpp.patch and fdcache_h.patch)  
 Move files under s3fs directory :  
 ```
 mv fdcache_cpp.patch ~/s3fs-fuse/src/  
