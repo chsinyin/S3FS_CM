@@ -19,8 +19,16 @@ Patch files :
 patch -po < fdcache_cpp.patch  
 patch -po < fdcache_h.patch
 ```
-You can modify the path of cache, maximum cache size, log files' path and change the compress-decision in `fdcache.cpp ` 
-And make file :  
+You can modify :  
+-The path of cache  
+-Maximum cache size  
+-Size of one page  
+-Log files' path  
+-Method of decide to compress or not to compress a file
+-...
+in `fdcache.cpp ` 
+  
+Make file :  
 ```
 sudo make  
 cd ..  
