@@ -30,4 +30,5 @@ s3fs testBucket tmp/s3
 ```
 In this version, the mount point(tmp/s3) is used to identify s3fs_CM.  
 If the mount point is not tmp/s3, it behaves as original s3fs.  
-This can also be modified in fdcache.cpp
+This(mount point for s3fs_CM) can also be modified in fdcache.cpp  
+Other usage is as s3fs.
