@@ -25,7 +25,7 @@ You can modify :
 -Size of one page  
 -Log files' path  
 -Method of decide to compress or not to compress a file  
--...
+-...  
 in `fdcache.cpp ` 
   
 After the modification, make file :  
